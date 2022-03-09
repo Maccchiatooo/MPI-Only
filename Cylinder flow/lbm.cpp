@@ -2,6 +2,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <iostream>
+#include <algorithm>
+
+using namespace std;
 
 void LBM::Initialize()
 {
@@ -179,15 +182,15 @@ void LBM::Initialize()
         {
             for (int i = 0; i < lx; i++)
             {
-                ua[i + j * lx + k * lx * ly] = 0;
-                va[i + j * lx + k * lx * ly] = 0;
-                wa[i + j * lx + k * lx * ly] = 0;
-                p[i + j * lx + k * lx * ly] = 0;
-                rho[i + j * lx + k * lx * ly] = rho0;
+                ua[i + j * lx + k * lx * ly] = 0.0;
+                va[i + j * lx + k * lx * ly] = 0.0;
+                wa[i + j * lx + k * lx * ly] = 0.0;
+                p[i + j * lx + k * lx * ly] = 0.0;
+                rho[i + j * lx + k * lx * ly] = 1.0;
 
-                usr[i + j * lx + k * lx * ly] = (pow(x_lo + i - ghost - (glx - 1) / 8, 2) + pow((y_lo + j - ghost - (glx - 1) / 8), 2) + pow((z_lo + k - ghost - (glx - 1) / 8), 2) <= (glx - 1) / 32.0 * (glx - 1) / 32.0) ? 0 : 1;
+                usr[i + j * lx + k * lx * ly] = (pow(x_lo + i - ghost - 32.0, 2) + pow(y_lo + j - ghost - 32.0, 2) + pow(z_lo + k - ghost - 32.0, 2) <= 32.0) ? 0 : 1;
 
-                ua[i + j * lx + k * lx * ly] = (u0 * 4.0 * (z_lo + k - ghost) * (glz - 1 - (z_lo + k - ghost)) / pow((glz - 1), 2)) * usr[i + j * lx + k * lx * ly] * (0.9 + 0.2 * (rand() % 100) / 100);
+                ua[i + j * lx + k * lx * ly] = (u0 * 4.0 * (z_lo + k - ghost) * (glz - 1 - (z_lo + k - ghost)) / (double)pow((glz - 1), 2)) * usr[i + j * lx + k * lx * ly] * (1.0 + (rand() % 100) * 0.001);
 
                 for (int ii = 0; ii < q; ii++)
                 {
@@ -196,271 +199,68 @@ void LBM::Initialize()
             }
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
     for (int ii = 0; ii < q; ii++)
     {
-        for (int k = ghost; k < lz - ghost; k++)
+        for (int k = ghost; k < l_e[2]; k++)
         {
-            for (int j = ghost; j < ly - ghost; j++)
+            for (int j = ghost; j < l_e[1]; j++)
             {
-                for (int i = ghost; i < lx - ghost; i++)
+                for (int i = ghost; i < l_e[0]; i++)
                 {
-                    double udu = 4.5 * pow((e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly]), 2);
-                    double edu = 3.0 * e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly];
-                    double u2 = 1.5 * (pow(ua[i + j * lx + k * lx * ly], 2) + pow(va[i + j * lx + k * lx * ly], 2) + pow(wa[i + j * lx + k * lx * ly], 2));
+                    double eu2 = pow((e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly]), 2);
+                    double edu = e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly];
+                    double udu = pow(ua[i + j * lx + k * lx * ly], 2) + pow(va[i + j * lx + k * lx * ly], 2) + pow(wa[i + j * lx + k * lx * ly], 2);
                     f[ii + i * q + j * q * lx + k * q * lx * ly] = t[ii] * p[i + j * lx + k * lx * ly] * 3.0 +
-                                                                   t[ii] * (edu + udu - u2);
-                    ft[ii + i * q + j * q * lx + k * q * lx * ly] = 0;
+                                                                   t[ii] * (3.0 * edu + 4.5 * eu2 - 1.5 * udu);
+                    ft[ii + i * q + j * q * lx + k * q * lx * ly] = 0.0;
                 }
             }
         }
     }
+
+    MPI_Barrier(MPI_COMM_WORLD);
 };
 
 void LBM::Collision()
 {
-    for (int ii = 0; ii < q; ii++)
+
+    for (int k = l_s[2]; k < l_e[2]; k++)
     {
-        for (int k = ghost; k < lz - ghost; k++)
+        for (int j = l_s[1]; j < l_e[1]; j++)
         {
-            for (int j = ghost; j < ly - ghost; j++)
+            for (int i = l_s[0]; i < l_e[0]; i++)
             {
-                for (int i = ghost; i < lx - ghost; i++)
+                for (int ii = 0; ii < q; ii++)
                 {
-                    double udu = 4.5 * pow((e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly]), 2);
-                    double edu = 3.0 * e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly];
-                    double u2 = 1.5 * (pow(ua[i + j * lx + k * lx * ly], 2) + pow(va[i + j * lx + k * lx * ly], 2) + pow(wa[i + j * lx + k * lx * ly], 2));
+                    double eu2 = pow((e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly]), 2);
+                    double edu = e[3 * ii] * ua[i + j * lx + k * lx * ly] + e[3 * ii + 1] * va[i + j * lx + k * lx * ly] + e[3 * ii + 2] * wa[i + j * lx + k * lx * ly];
+                    double udu = pow(ua[i + j * lx + k * lx * ly], 2) + pow(va[i + j * lx + k * lx * ly], 2) + pow(wa[i + j * lx + k * lx * ly], 2);
 
                     double feq = t[ii] * p[i + j * lx + k * lx * ly] * 3.0 +
-                                 t[ii] * (edu + udu - u2);
+                                 t[ii] * (3.0 * edu + 4.5 * eu2 - 1.5 * udu);
 
                     f[ii + i * q + j * q * lx + k * q * lx * ly] -= (f[ii + i * q + j * q * lx + k * q * lx * ly] - feq) / (tau0 + 0.5);
                 }
             }
         }
     }
-}
-
-void LBM::exchange()
-{
-    // 6 faces
-
-    double *front = (double *)malloc(sizeof(double) * lx * q * lz);
-    double *frontout = (double *)malloc(sizeof(double) * lx * q * lz);
-    double *back = (double *)malloc(sizeof(double) * lx * q * lz);
-    double *backout = (double *)malloc(sizeof(double) * lx * q * lz);
-
-    double *up = (double *)malloc(sizeof(double) * lx * q * ly);
-    double *upout = (double *)malloc(sizeof(double) * lx * q * ly);
-    double *down = (double *)malloc(sizeof(double) * lx * q * ly);
-    double *downout = (double *)malloc(sizeof(double) * lx * q * ly);
-
-    if (z_lo != 0)
-    {
-        for (int j = 0; j < ly; j++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    downout[ii + i * q + j * lx * q] = f[ii + i * q + ghost * q * lx * ly + j * q * lx];
-                }
-            }
-        }
-    }
-
-    if (z_lo == 0)
-    {
-        for (int j = 0; j < ly; j++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    upout[ii + i * q + j * lx * q] = f[ii + i * q + (lz - ghost - 1) * q * lx * ly + j * q * lx];
-                }
-            }
-        }
-    }
-    if (y_lo != 0)
-    {
-        for (int k = 0; k < lz; k++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    frontout[ii + i * q + k * lx * q] = f[ii + i * q + ghost * q * lx + k * q * lx * ly];
-                }
-            }
-        }
-    }
-    if (y_lo == 0)
-    {
-        for (int k = 0; k < lz; k++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    backout[ii + i * q + k * lx * q] = f[ii + i * q + (ly - ghost - 1) * q * lx + k * q * lx * ly];
-                }
-            }
-        }
-    }
-    int mar = 1;
-    if (y_lo != 0)
-    {
-        MPI_Send(frontout, lx * q * lz, MPI_DOUBLE, comm.front, mar, comm.comm);
-    }
-    if (y_hi != gly - 1)
-    {
-
-        MPI_Recv(back, lx * q * lz, MPI_DOUBLE, comm.back, mar, comm.comm, MPI_STATUSES_IGNORE);
-    }
-
     MPI_Barrier(MPI_COMM_WORLD);
-    mar = 2;
-    if (y_hi != gly - 1)
-    {
-
-        MPI_Send(backout, lx * q * lz, MPI_DOUBLE, comm.back, mar, comm.comm);
-    }
-    if (y_lo != 0)
-    {
-
-        MPI_Recv(front, lx * q * lz, MPI_DOUBLE, comm.front, mar, comm.comm, MPI_STATUSES_IGNORE);
-    }
-
-    mar = 3;
-    if (z_lo != 0)
-    {
-        MPI_Send(downout, lx * q * ly, MPI_DOUBLE, comm.down, mar, comm.comm);
-    }
-    if (z_hi != glz - 1)
-    {
-
-        MPI_Recv(up, lx * q * ly, MPI_DOUBLE, comm.up, mar, comm.comm, MPI_STATUSES_IGNORE);
-    }
-
-    mar = 4;
-    if (z_lo == 0)
-    {
-        MPI_Send(upout, lx * q * ly, MPI_DOUBLE, comm.up, mar, comm.comm);
-    }
-    if (z_hi == glz - 1)
-    {
-
-        MPI_Recv(down, lx * q * ly, MPI_DOUBLE, comm.down, mar, comm.comm, MPI_STATUSES_IGNORE);
-    }
-
-    MPI_Barrier(MPI_COMM_WORLD);
-
-    MPI_Barrier(MPI_COMM_WORLD);
-    if (y_lo == 0)
-    {
-        for (int k = 0; k < lz; k++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    f[ii + i * q + (ly - ghost) * q * lx + k * q * lx * ly] = back[ii + i * q + k * lx * q];
-                }
-            }
-        }
-    }
-    if (y_lo != 0)
-    {
-        for (int k = 0; k < lz; k++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    f[ii + i * q + (ghost - 1) * q * lx + k * q * lx * ly] = front[ii + i * q + k * lx * q];
-                }
-            }
-        }
-    }
-
-    if (z_lo != 0)
-    {
-        for (int j = 0; j < ly; j++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    f[ii + i * q + (ghost - 1) * q * lx * ly + j * q * lx] = down[ii + i * q + j * lx * q];
-                }
-            }
-        }
-    }
-
-    if (z_lo == 0)
-    {
-        for (int j = 0; j < ly; j++)
-        {
-            for (int i = 0; i < lx; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    f[ii + i * q + (lz - ghost) * q * lx * ly + j * q * lx] = up[ii + i * q + j * lx * q];
-                }
-            }
-        }
-    }
 }
 
 void LBM::Streaming()
 {
-
-    // front boundary bounce back
-
-    // bottom boundary bounce back
-    if (z_lo == 0)
-    {
-        for (int j = ghost - 1; j < ly - ghost + 1; j++)
-        {
-            for (int i = ghost - 1; i < lx - ghost + 1; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    if (e[ii * 3 + 2] > 0)
-                    {
-                        f[ii + q * i + q * j * lx + q * (ghost - 1) * lx * ly] = f[ii + q * (i + 2 * e[ii * 3]) + q * (j + 2 * e[ii * 3 + 1]) * lx + q * (ghost - 1 + 2 * e[ii * 3 + 2]) * lx * ly];
-                    }
-                }
-            }
-        }
-    }
-    if (z_lo != 0)
-    {
-        for (int j = ghost - 1; j < ly - ghost + 1; j++)
-        {
-            for (int i = ghost - 1; i < lx - ghost + 1; i++)
-            {
-                for (int ii = 0; ii < q; ii++)
-                {
-                    if (e[ii * 3 + 2] < 0)
-                    {
-                        f[ii + q * i + q * j * lx + q * (lz - ghost) * lx * ly] = f[ii + q * (i + 2 * e[ii * 3]) + q * (j + 2 * e[ii * 3 + 1]) * lx + q * (lz - ghost + 2 * e[ii * 3 + 2]) * lx * ly];
-                    }
-                }
-            }
-        }
-    }
     if (y_lo == 0)
     {
-        for (int k = ghost - 1; k < lz - ghost + 1; k++)
+        for (int k = ghost - 1; k < l_e[2] + 1; k++)
         {
-            for (int i = ghost - 1; i < lx - ghost + 1; i++)
+            for (int i = ghost - 1; i < l_e[0] + 1; i++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
                     if (e[ii * 3 + 1] > 0)
                     {
-                        f[ii + q * i + q * (ghost - 1) * lx + q * k * lx * ly] = f[ii + q * (i + 2 * e[ii * 3]) + q * (k + 2 * e[ii * 3 + 2]) * lx * ly + q * (ghost - 1 + 2 * e[ii * 3 + 1]) * lx];
+                        f[ii + q * i + q * (ghost - 1) * lx + q * k * lx * ly] = f[bb[ii] + q * (i + 2 * e[ii * 3]) + q * (k + 2 * e[ii * 3 + 2]) * lx * ly + q * (ghost + 1) * lx];
                     }
                 }
             }
@@ -469,25 +269,60 @@ void LBM::Streaming()
 
     if (y_hi == gly - 1)
     {
-        for (int k = ghost - 1; k < lz - ghost + 1; k++)
+        for (int k = ghost - 1; k < l_e[2] + 1; k++)
         {
-            for (int i = ghost - 1; i < lx - ghost + 1; i++)
+            for (int i = ghost - 1; i < l_e[0] + 1; i++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
                     if (e[ii * 3 + 1] < 0)
                     {
-                        f[ii + q * i + q * (ly - ghost) * lx + q * k * lx * ly] = f[ii + q * (i + 2 * e[ii * 3]) + q * (k + 2 * e[ii * 3 + 2]) * lx * ly + q * (ly - ghost + 2 * e[ii * 3 + 1]) * lx];
+                        f[ii + q * i + q * (l_e[1]) * lx + q * k * lx * ly] = f[bb[ii] + q * (i + 2 * e[ii * 3]) + q * (k + 2 * e[ii * 3 + 2]) * lx * ly + q * (l_e[1] - 2) * lx];
                     }
                 }
             }
         }
     }
+
+    if (z_lo == 0)
+    {
+        for (int j = ghost - 1; j < l_e[1] + 1; j++)
+        {
+            for (int i = ghost - 1; i < l_e[0] + 1; i++)
+            {
+                for (int ii = 0; ii < q; ii++)
+                {
+                    if (e[ii * 3 + 2] > 0)
+                    {
+                        f[ii + q * i + q * j * lx + q * (ghost - 1) * lx * ly] = f[bb[ii] + q * (i + 2 * e[ii * 3]) + q * (j + 2 * e[ii * 3 + 1]) * lx + q * (ghost + 1) * lx * ly];
+                    }
+                }
+            }
+        }
+    }
+
+    if (z_hi == glz - 1)
+    {
+        for (int j = ghost - 1; j < l_e[1] + 1; j++)
+        {
+            for (int i = ghost - 1; i < l_e[0] + 1; i++)
+            {
+                for (int ii = 0; ii < q; ii++)
+                {
+                    if (e[ii * 3 + 2] < 0)
+                    {
+                        f[ii + q * i + q * j * lx + q * (l_e[2]) * lx * ly] = f[bb[ii] + q * (i + 2 * e[ii * 3]) + q * (j + 2 * e[ii * 3 + 1]) * lx + q * (l_e[2] - 2) * lx * ly];
+                    }
+                }
+            }
+        }
+    }
+
     if (x_lo == 0)
     {
-        for (int k = ghost - 1; k < lz - ghost + 1; k++)
+        for (int k = ghost - 1; k < l_e[2] + 1; k++)
         {
-            for (int j = ghost - 1; j < ly - ghost + 1; j++)
+            for (int j = ghost - 1; j < l_e[1] + 1; j++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
@@ -497,30 +332,48 @@ void LBM::Streaming()
             }
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
     // right boundary free flow
     if (x_hi == glx - 1)
     {
-        for (int k = ghost - 1; k < lz - ghost + 1; k++)
+        for (int k = ghost - 1; k < l_e[2] + 1; k++)
         {
-            for (int j = ghost - 1; j < ly - ghost + 1; j++)
+            for (int j = ghost - 1; j < l_e[1] + 1; j++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
                     if (e[ii * 3] < 0)
                     {
-                        f[ii + q * (lx - ghost) + q * j * lx + q * k * lx * ly] = f[ii + q * (lx - ghost + e[ii * 3]) + q * (j + e[ii * 3 + 1]) * lx + q * (k + e[ii * 3 + 2]) * lx * ly];
+                        f[ii + q * (l_e[0]) + q * j * lx + q * k * lx * ly] = f[ii + q * (l_e[0] - 1) + q * (j + e[ii * 3 + 1]) * lx + q * (k + e[ii * 3 + 2]) * lx * ly];
                     }
                 }
             }
         }
     }
     // streaming process
-
-    for (int k = ghost; k < lz - ghost; k++)
+    MPI_Barrier(MPI_COMM_WORLD);
+    for (int k = ghost; k < l_e[2]; k++)
     {
-        for (int j = ghost; j < ly - ghost; j++)
+        for (int j = ghost; j < l_e[1]; j++)
         {
-            for (int i = ghost; i < lx - ghost; i++)
+            for (int i = ghost; i < l_e[0]; i++)
+            {
+                for (int ii = 0; ii < q; ii++)
+                {
+                    if (usr[i + j * lx + k * lx * ly] == 0 && usr[i + e[ii * dim] + (j + e[ii * dim + 1]) * lx + (k + e[ii * dim + 2]) * lx * ly] == 1)
+                    {
+                        f[ii + i * q + q * j * lx + q * k * lx * ly] = f[bb[ii] + (i + 2 * e[ii * dim]) * q + q * (j + 2 * e[ii * dim + 1]) * lx + q * (k + 2 * e[ii * dim + 2]) * lx * ly];
+                    }
+                }
+            }
+        }
+    }
+
+    for (int k = ghost; k < l_e[2]; k++)
+    {
+        for (int j = ghost; j < l_e[1]; j++)
+        {
+            for (int i = ghost; i < l_e[0]; i++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
@@ -529,12 +382,12 @@ void LBM::Streaming()
             }
         }
     }
-
-    for (int k = ghost; k < lz - ghost; k++)
+    MPI_Barrier(MPI_COMM_WORLD);
+    for (int k = ghost; k < l_e[2]; k++)
     {
-        for (int j = ghost; j < ly - ghost; j++)
+        for (int j = ghost; j < l_e[1]; j++)
         {
-            for (int i = ghost; i < lx - ghost; i++)
+            for (int i = ghost; i < l_e[0]; i++)
             {
                 for (int ii = 0; ii < q; ii++)
                 {
@@ -543,37 +396,26 @@ void LBM::Streaming()
             }
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 };
 
 void LBM::Update()
 {
     // update macroscopic value
-
-    for (int k = 0; k < lz; k++)
+    for (int k = ghost; k < l_e[2]; k++)
     {
-        for (int j = 0; j < ly; j++)
+        for (int j = ghost; j < l_e[1]; j++)
         {
-            for (int i = 0; i < lx; i++)
+            for (int i = ghost; i < l_e[0]; i++)
             {
-                ua[i + j * lx + k * lx * ly] = 0;
-                va[i + j * lx + k * lx * ly] = 0;
-                wa[i + j * lx + k * lx * ly] = 0;
-                p[i + j * lx + k * lx * ly] = 0;
-            }
-        }
-    }
-
-    for (int i = ghost; i < lx - ghost; i++)
-    {
-        for (int k = ghost; k < lz - ghost; k++)
-        {
-            for (int j = ghost; j < ly - ghost; j++)
-            {
+                ua[i + j * lx + k * lx * ly] = 0.0;
+                va[i + j * lx + k * lx * ly] = 0.0;
+                wa[i + j * lx + k * lx * ly] = 0.0;
+                p[i + j * lx + k * lx * ly] = 0.0;
                 for (int ii = 0; ii < q; ii++)
                 {
 
                     p[i + j * lx + k * lx * ly] = p[i + j * lx + k * lx * ly] + f[ii + i * q + j * lx * q + k * lx * ly * q] / 3.0;
-
                     ua[i + j * lx + k * lx * ly] = ua[i + j * lx + k * lx * ly] + f[ii + i * q + j * lx * q + k * lx * ly * q] * e[ii * 3];
                     va[i + j * lx + k * lx * ly] = va[i + j * lx + k * lx * ly] + f[ii + i * q + j * lx * q + k * lx * ly * q] * e[ii * 3 + 1];
                     wa[i + j * lx + k * lx * ly] = wa[i + j * lx + k * lx * ly] + f[ii + i * q + j * lx * q + k * lx * ly * q] * e[ii * 3 + 2];
@@ -591,18 +433,18 @@ void LBM::Update()
                 }
                 if (x_hi == glx - 1)
                 {
-                    p[lx - ghost - 1 + j * lx + k * lx * ly] = 0.0;
+                    p[l_e[0] - 1 + j * lx + k * lx * ly] = 0.0;
                 }
             }
         }
     }
+    MPI_Barrier(MPI_COMM_WORLD);
 };
 
 void LBM::MPIoutput(int n)
 {
     // MPI_IO
     MPI_File fh;
-    MPIO_Request request;
     MPI_Status status;
     MPI_Offset offset = 0;
 
@@ -613,9 +455,11 @@ void LBM::MPIoutput(int n)
     double fp;
     // min max
     double umin, umax, wmin, wmax, vmin, vmax, pmin, pmax;
+    double uumin, uumax, wwmin, wwmax, vvmin, vvmax, ppmin, ppmax;
+
     // transfer
     double *uu, *vv, *ww, *pp, *xx, *yy, *zz;
-    int start[3];
+
     uu = (double *)malloc(ex * ey * ez * sizeof(double));
     vv = (double *)malloc(ex * ey * ez * sizeof(double));
     ww = (double *)malloc(ex * ey * ez * sizeof(double));
@@ -642,6 +486,28 @@ void LBM::MPIoutput(int n)
         }
     }
 
+    umin = *min_element(uu, uu + ex * ey * ez - 1);
+    umax = *max_element(uu, uu + ex * ey * ez - 1);
+    vmin = *min_element(vv, vv + ex * ey * ez - 1);
+    vmax = *max_element(vv, vv + ex * ey * ez - 1);
+    wmin = *min_element(ww, ww + ex * ey * ez - 1);
+    wmax = *max_element(ww, ww + ex * ey * ez - 1);
+
+    pmin = *min_element(pp, pp + ex * ey * ez - 1);
+    pmax = *max_element(pp, pp + ex * ey * ez - 1);
+    MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Reduce(&umin, &uumin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&umax, &uumax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Reduce(&vmin, &vvmin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&vmax, &vvmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Reduce(&wmin, &wwmin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&wmax, &wwmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+
+    MPI_Reduce(&pmin, &ppmin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&pmax, &ppmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
     std::string str1 = "output" + std::to_string(n) + ".plt";
     const char *na = str1.c_str();
     std::string str2 = "#!TDV112";
@@ -800,21 +666,21 @@ void LBM::MPIoutput(int n)
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
         fp = 1.0;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = 0.01;
+        fp = uumin;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = 0.1;
+        fp = uumax;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = -0.03;
+        fp = vvmin;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = 0.03;
+        fp = vvmax;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = -0.03;
+        fp = wwmin;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = 0.03;
+        fp = wwmax;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = -0.03;
+        fp = ppmin;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
-        fp = 0.03;
+        fp = ppmax;
         MPI_File_write(fh, &fp, 1, MPI_DOUBLE, &status);
 
         // 220 + 14 * 8 = 332
@@ -822,12 +688,10 @@ void LBM::MPIoutput(int n)
 
     offset = 332;
 
-    int loclen[3] = {ex, ey, ez};
     int glolen[3] = {glx, gly, glz};
-    int iniarr[3] = {0, 0, 0};
     int localstart[3] = {x_lo, y_lo, z_lo};
 
-    MPI_Type_create_subarray(dim, glolen, loclen, localstart, MPI_ORDER_FORTRAN, MPI_DOUBLE, &DATATYPE);
+    MPI_Type_create_subarray(dim, glolen, l_l, localstart, MPI_ORDER_FORTRAN, MPI_DOUBLE, &DATATYPE);
 
     // MPI_Type_commit(&DATATYPE);
 
