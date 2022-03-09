@@ -4,33 +4,38 @@
 
 int main(int argc, char *argv[])
 {
-    int nx = 256;
-    int ny = 64;
-    int nz = 64;
+
     double start, end;
     MPI_Init(&argc, &argv);
-
-    System s1(nx, ny, nz);
-    s1.Initialize();
-    s1.Monitor();
+    int rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    System s1;
+    if (rank == 0)
+    {
+        s1.Monitor();
+    }
     MPI_Barrier(MPI_COMM_WORLD);
     LBM l1(MPI_COMM_WORLD, s1.sx, s1.sy, s1.sz, s1.tau, s1.rho0, s1.u0);
 
     l1.Initialize();
 
     l1.MPIoutput(0);
-
-    for (int it = 1; it <= 10; it++)
+    l1.setup_subdomain();
+    start = MPI_Wtime();
+    for (int it = 1; it <= s1.Time; it++)
     {
         l1.Collision();
+        l1.pack();
         l1.exchange();
-
+        l1.unpack();
         l1.Streaming();
         l1.Update();
         end = MPI_Wtime();
-        if (it % 1 == 0)
+        if (it % s1.inter == 0)
         {
-            l1.MPIoutput(it / 1);
+            l1.MPIoutput(it / s1.inter);
+            if (l1.comm.me == 0)
+                printf("time=%f\n", end - start);
         }
     }
 
