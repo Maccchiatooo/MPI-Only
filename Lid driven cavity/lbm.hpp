@@ -14,10 +14,12 @@
 #define q 27
 #define dim 3
 #define ghost 3
+
 struct CommHelper
 {
 
     MPI_Comm comm;
+    int nranks;
     int rx, ry, rz;
     int me;
     int px, py, pz;
@@ -26,7 +28,7 @@ struct CommHelper
     CommHelper(MPI_Comm comm_)
     {
         comm = comm_;
-        int nranks;
+
         MPI_Comm_size(comm, &nranks);
         MPI_Comm_rank(comm, &me);
 
@@ -121,6 +123,7 @@ struct LBM
     double cs2;
     double tau0;
     double u0;
+
     double *m_left, *m_right, *m_down, *m_up, *m_front, *m_back;
     double *m_leftout, *m_rightout, *m_downout, *m_upout, *m_frontout, *m_backout;
     // 12 edges
@@ -132,7 +135,7 @@ struct LBM
 
     double *f, *ft, *fb, *ua, *va, *wa, *rho, *p, *t;
     int *e, *usr, *ran, *bb;
-    double *front, *frontout, *back, *backout;
+
     LBM(MPI_Comm comm_, int sx, int sy, int sz, double &tau, double &rho0, double &u0) : comm(comm_), glx(sx), gly(sy), glz(sz), tau0(tau), rho0(rho0), u0(u0)
     {
 
@@ -156,36 +159,58 @@ struct LBM
         l_e[1] = l_s[1] + l_l[1];
         l_e[2] = l_s[2] + l_l[2];
 
-        int x_his[comm.rx];
-        int y_his[comm.ry];
-        int z_his[comm.rz];
+        int x_his[comm.nranks];
+        int y_his[comm.nranks];
+        int z_his[comm.nranks];
+
+        int ax_his[comm.rx][comm.ry][comm.rz];
+        int ay_his[comm.rx][comm.ry][comm.rz];
+        int az_his[comm.rx][comm.ry][comm.rz];
 
         MPI_Allgather(l_l, 1, MPI_INT, x_his, 1, MPI_INT, comm.comm);
 
-        for (int i = 0; i <= comm.px; i++)
-        {
-            x_hi += x_his[i];
-        }
-        x_lo = x_hi - l_l[0];
-        x_hi = x_hi - 1;
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allgather(l_l + 1, 1, MPI_INT, y_his, 1, MPI_INT, comm.comm);
-        for (int j = 0; j <= comm.py; j++)
-        {
-            y_hi += y_his[j];
-        }
-        y_lo = y_hi - l_l[1];
-        y_hi = y_hi - 1;
+
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allgather(l_l + 2, 1, MPI_INT, z_his, 1, MPI_INT, comm.comm);
 
+        for (int i = 0; i < comm.rx; i++)
+        {
+            for (int j = 0; j < comm.ry; j++)
+            {
+                for (int k = 0; k < comm.rz; k++)
+                {
+                    ax_his[i][j][k] = x_his[i + j * (comm.rx) + k * (comm.rx) * (comm.ry)];
+                    ay_his[i][j][k] = y_his[i + j * (comm.rx) + k * (comm.rx) * (comm.ry)];
+                    az_his[i][j][k] = z_his[i + j * (comm.rx) + k * (comm.rx) * (comm.ry)];
+                }
+            }
+        }
+        for (int i = 0; i <= comm.px; i++)
+        {
+            x_hi += ax_his[i][0][0];
+        }
+
+        for (int j = 0; j <= comm.py; j++)
+        {
+            y_hi += ay_his[0][j][0];
+        }
+
         for (int k = 0; k <= comm.pz; k++)
         {
-            z_hi += z_his[k];
+            z_hi += az_his[0][0][k];
         }
-        // local low and local high
+        x_lo = x_hi - l_l[0];
+        x_hi = x_hi - 1;
+
+        y_lo = y_hi - l_l[1];
+        y_hi = y_hi - 1;
+
         z_lo = z_hi - l_l[2];
         z_hi = z_hi - 1;
+
+        printf("x_lo=%d,y_lo=%d,z_lo=%d,x_hi=%d,y_hi=%d,z_hi=%d\n", x_lo, y_lo, z_lo, x_hi, y_hi, z_hi);
 
         f = (double *)malloc(sizeof(double) * q * lx * ly * lz);
         ft = (double *)malloc(sizeof(double) * q * lx * ly * lz);
@@ -203,6 +228,8 @@ struct LBM
         usr = (int *)malloc(sizeof(int) * lx * ly * lz);
         ran = (int *)malloc(sizeof(int) * lx * ly * lz);
         bb = (int *)malloc(sizeof(int) * q);
+
+        MPI_Barrier(MPI_COMM_WORLD);
     };
 
     void Initialize();
@@ -213,6 +240,7 @@ struct LBM
     void unpack();
     void Streaming();
     void Update();
+    void testout();
     void MPIoutput(int n);
     void Output(int n);
 };
