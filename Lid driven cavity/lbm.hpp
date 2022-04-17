@@ -168,13 +168,11 @@ struct LBM
         int az_his[comm.rx][comm.ry][comm.rz];
 
         MPI_Allgather(l_l, 1, MPI_INT, x_his, 1, MPI_INT, comm.comm);
-
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allgather(l_l + 1, 1, MPI_INT, y_his, 1, MPI_INT, comm.comm);
-
         MPI_Barrier(MPI_COMM_WORLD);
         MPI_Allgather(l_l + 2, 1, MPI_INT, z_his, 1, MPI_INT, comm.comm);
-
+        MPI_Barrier(MPI_COMM_WORLD);
         for (int i = 0; i < comm.rx; i++)
         {
             for (int j = 0; j < comm.ry; j++)
